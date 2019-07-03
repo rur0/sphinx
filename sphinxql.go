@@ -5,15 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
 	"io"
 	"reflect"
 	"strconv"
 	"strings"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 const (
-	DefaultPK = "Id"
+	DefaultPK = "ID"
 )
 
 func (sc *Client) SetIndex(index string) *Client {
@@ -58,9 +59,9 @@ func (sc *Client) GetDb() (err error) {
 	if sc.DB, err = sql.Open("mysql", addr+"/"); err != nil {
 		return err
 	}
-	
+
 	// FIXME
-	// The returned DB is safe for concurrent use by multiple goroutines and maintains its own pool of idle connections. 
+	// The returned DB is safe for concurrent use by multiple goroutines and maintains its own pool of idle connections.
 	//sc.DB.SetMaxOpenConns(100)
 	sc.DB.SetMaxIdleConns(10)
 
@@ -70,11 +71,11 @@ func (sc *Client) GetDb() (err error) {
 // Caller should close db.
 func (sc *Client) Init(obj interface{}) (err error) {
 	// Init sql.DB
-	//if sc.DB == nil {
-	//	if err = sc.GetDb(); err != nil {
-	//		return fmt.Errorf("Init > %v", err)
-	//	}
-	//}
+	// if sc.DB == nil {
+	// 	if err = sc.GetDb(); err != nil {
+	// 		return fmt.Errorf("Init > %v", err)
+	// 	}
+	// }
 
 	// Get object's reflect.Value
 	if obj != nil { //some functions do not need sc.val
@@ -97,7 +98,7 @@ func (sc *Client) Execute(sqlStr string) (result sql.Result, err error) {
 		}
 	}
 	// It is rare to Close a DB, as the DB handle is meant to be
-        // long-lived and shared between many goroutines.
+	// long-lived and shared between many goroutines.
 	//defer sc.DB.Close()
 	return sc.DB.Exec(sqlStr)
 }
@@ -133,21 +134,46 @@ func (sc *Client) insert(obj interface{}, doReplace bool) (err error) {
 	// If not set sc.Columns, then use all fields as columns
 	if len(sc.Columns) == 0 {
 		if sc.val.Kind() == reflect.Struct {
-			var appendField func(*[]string, *[]string, reflect.Value) error
-			appendField = func(strs *[]string, vals *[]string, val reflect.Value) (err error) {
+			var appendField func(*[]string, *[]string, *[]string, reflect.Value) error
+
+			appendField = func(structColumns *[]string, sphinxColumns *[]string, vals *[]string, val reflect.Value) (err error) {
 				for i := 0; i < val.NumField(); i++ {
 					fieldVal := val.Field(i)
 					sf := val.Type().Field(i)
 
 					switch fieldVal.Type().Kind() {
 					case reflect.Struct:
-						if err = appendField(strs, vals, fieldVal); err != nil {
+						if err = appendField(structColumns, sphinxColumns, vals, fieldVal); err != nil {
 							return err
 						}
 					case reflect.Slice, reflect.Map:
-						// just pass
+						if column := sf.Tag.Get("column"); column != "" {
+							// set specified column
+							*sphinxColumns = append(*sphinxColumns, column)
+						} else {
+							// falback for field name
+							*sphinxColumns = append(*sphinxColumns, sf.Name)
+						}
+
+						*structColumns = append(*structColumns, sf.Name)
+
+						s, err := GetValQuoteStr(fieldVal)
+						if err != nil {
+							return err
+						}
+						*vals = append(*vals, s)
+
 					default:
-						*strs = append(*strs, sf.Name)
+						if column := sf.Tag.Get("column"); column != "" {
+							// set specified column
+							*sphinxColumns = append(*sphinxColumns, column)
+						} else {
+							// falback for field name
+							*sphinxColumns = append(*sphinxColumns, sf.Name)
+						}
+
+						*structColumns = append(*structColumns, sf.Name)
+
 						s, err := GetValQuoteStr(fieldVal)
 						if err != nil {
 							return err
@@ -159,7 +185,7 @@ func (sc *Client) insert(obj interface{}, doReplace bool) (err error) {
 				return nil
 			}
 
-			if err = appendField(&sc.Columns, &colVals, sc.val); err != nil {
+			if err = appendField(&sc.StructColumns, &sc.Columns, &colVals, sc.val); err != nil {
 				return
 			}
 		} else {
@@ -172,7 +198,7 @@ func (sc *Client) insert(obj interface{}, doReplace bool) (err error) {
 			colVals = []string{s}
 		}
 
-	} else if colVals, err = GetColVals(sc.val, sc.Columns); err != nil {
+	} else if colVals, err = GetColVals(sc.val, sc.StructColumns); err != nil {
 		return
 	}
 
@@ -182,6 +208,7 @@ func (sc *Client) insert(obj interface{}, doReplace bool) (err error) {
 	} else {
 		sqlStr = "INSERT"
 	}
+
 	sqlStr += fmt.Sprintf(" INTO %s (%s) VALUES (%s)", sc.Index, strings.Join(sc.Columns, ","), strings.Join(colVals, ","))
 
 	//fmt.Printf("Insert sql: %s\n", sqlStr)
@@ -345,10 +372,11 @@ func GetColVals(val reflect.Value, cols []string) (values []string, err error) {
 	values = make([]string, len(cols))
 	for i, col := range cols {
 		var fieldVal reflect.Value
+
 		if val.Kind() == reflect.Struct {
 			fieldIndex := getFieldIndexByName(typ, col)
 			if fieldIndex[0] < 0 {
-				return nil, fmt.Errorf("GetColVals> Can't found struct field(column): '%s'\n", col)
+				return nil, fmt.Errorf("GetColVals> Can't find struct field(column): '%s'", col)
 			}
 			fieldVal = val.FieldByIndex(fieldIndex)
 		} else {
@@ -361,6 +389,12 @@ func GetColVals(val reflect.Value, cols []string) (values []string, err error) {
 	}
 
 	return
+}
+
+func arrayToString(a []int, delim string) string {
+	return strings.Trim(strings.Replace(fmt.Sprint(a), " ", delim, -1), "[]")
+	//return strings.Trim(strings.Join(strings.Split(fmt.Sprint(a), " "), delim), "[]")
+	//return strings.Trim(strings.Join(strings.Fields(fmt.Sprint(a)), delim), "[]")
 }
 
 // for insert and update
@@ -382,6 +416,11 @@ func GetValQuoteStr(val reflect.Value) (string, error) {
 	case reflect.String:
 		return QuoteStr(val.String()), nil
 	case reflect.Slice: //[]byte
+		if val.Type().Elem().Name() == "int" {
+			// mva integers
+			return "(" + arrayToString(val.Interface().([]int), ",") + ")", nil
+		}
+
 		if val.Type().Elem().Name() != "uint8" {
 			return "", fmt.Errorf("GetValQuoteStr> slicetype is not []byte: %v", val.Interface())
 		}
