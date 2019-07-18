@@ -190,6 +190,7 @@ type Options struct {
 	Index         string   // index name for sphinxql query.
 	Columns       []string // column names in sphinx index
 	StructColumns []string // column names in given struct
+	MapColumns    []string // column names in given map
 	Where         string
 }
 
@@ -210,8 +211,9 @@ type Client struct {
 	overrides    map[string]override
 
 	// For sphinxql
-	DB  *sql.DB       // Capitalize, so that can "defer sc.Db.Close()"
-	val reflect.Value // object parameter's reflect value
+	DB     *sql.DB       // Capitalize, so that can "defer sc.Db.Close()"
+	val    reflect.Value // object parameter's reflect value
+	valMap map[string]interface{}
 }
 
 // You can change it, so that you do not need to call Set***() every time.

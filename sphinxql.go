@@ -80,13 +80,19 @@ func (sc *Client) Init(obj interface{}) (err error) {
 	// Get object's reflect.Value
 	if obj != nil { //some functions do not need sc.val
 		sc.val = reflect.Indirect(reflect.ValueOf(obj))
-
 		// check whether allValue is addressable, 'obj' must be a pointer!
 		if !sc.val.CanAddr() {
 			return fmt.Errorf("sc.Init> The obj value is unaddressable value")
 		}
 	}
 
+	return
+}
+
+func (sc *Client) InitMap(hashMap map[string]interface{}) (err error) {
+	if hashMap != nil {
+		sc.valMap = hashMap
+	}
 	return
 }
 
@@ -122,6 +128,59 @@ func (sc *Client) ExecuteReturnRowsAffected(sqlStr string) (rowsAffected int, er
 		return rowsAffected, fmt.Errorf("ExecuteReturnRowsAffected> Nagtive RowsAffected(): %d", rowsAffected)
 	}
 	return
+}
+
+func (sc *Client) insertMap(valMap map[string]interface{}, doReplace bool) (err error) {
+	if err = sc.InitMap(valMap); err != nil {
+		return fmt.Errorf("insertMap > %v", err)
+	}
+
+	var colVals []string
+	if len(sc.Columns) == 0 {
+		if reflect.TypeOf(sc.valMap).Kind() == reflect.Map {
+			// anon function signature
+			var appendField func(*[]string, *[]string, *[]string, map[string]interface{}) error
+
+			// anon function
+			appendField = func(mapColumns *[]string, sphinxColumns *[]string, vals *[]string, valMap map[string]interface{}) (err error) {
+				for column, value := range valMap {
+					switch value.(type) {
+					default:
+						*sphinxColumns = append(*sphinxColumns, column)
+						*mapColumns = append(*mapColumns, column)
+						s, err := GetValQuoteStr(reflect.ValueOf(value))
+						if err != nil {
+							return err
+						}
+						*vals = append(*vals, s)
+					}
+				}
+				return nil
+			}
+
+			if err = appendField(&sc.MapColumns, &sc.Columns, &colVals, sc.valMap); err != nil {
+				return
+			}
+
+			var sqlStr string
+			if doReplace {
+				sqlStr = "REPLACE"
+			} else {
+				sqlStr = "INSERT"
+			}
+
+			sqlStr += fmt.Sprintf(" INTO %s (%s) VALUES (%s)", sc.Index, strings.Join(sc.Columns, ","), strings.Join(colVals, ","))
+
+			//fmt.Printf("\nInsert sql: %s\n", sqlStr)
+			if _, err = sc.Execute(sqlStr); err != nil {
+				return fmt.Errorf("Insert > %v", err)
+			}
+
+			return
+		}
+	}
+
+	return nil
 }
 
 // Sphinx doesn't support LastInsertId now.
@@ -227,6 +286,10 @@ func (sc *Client) Insert(obj interface{}) error {
 func (sc *Client) Replace(obj interface{}) error {
 	// true means DO REPLACE
 	return sc.insert(obj, true)
+}
+
+func (sc *Client) ReplaceMap(valMap map[string]interface{}) error {
+	return sc.insertMap(valMap, true)
 }
 
 // Must set columns!
