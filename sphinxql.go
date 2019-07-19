@@ -162,25 +162,27 @@ func (sc *Client) insertMap(valMap map[string]interface{}, doReplace bool) (err 
 				return
 			}
 
-			var sqlStr string
-			if doReplace {
-				sqlStr = "REPLACE"
-			} else {
-				sqlStr = "INSERT"
-			}
-
-			sqlStr += fmt.Sprintf(" INTO %s (%s) VALUES (%s)", sc.Index, strings.Join(sc.Columns, ","), strings.Join(colVals, ","))
-
-			//fmt.Printf("\nInsert sql: %s\n", sqlStr)
-			if _, err = sc.Execute(sqlStr); err != nil {
-				return fmt.Errorf("Insert > %v", err)
-			}
-
-			return
 		}
+	} else if colVals, err = GetMapColVals(sc.valMap, sc.MapColumns); err != nil {
+		return
 	}
 
-	return nil
+	var sqlStr string
+	if doReplace {
+		sqlStr = "REPLACE"
+	} else {
+		sqlStr = "INSERT"
+	}
+
+	sqlStr += fmt.Sprintf(" INTO %s (%s) VALUES (%s)", sc.Index, strings.Join(sc.Columns, ","), strings.Join(colVals, ","))
+
+	//log.Fatalf("\nInsert sql: %s\n", sqlStr)
+	//log.Fatalf("%d, %d\n", len(colVals), len(sc.MapColumns))
+	if _, err = sc.Execute(sqlStr); err != nil {
+		return fmt.Errorf("InsertMap > %v", err)
+	}
+
+	return
 }
 
 // Sphinx doesn't support LastInsertId now.
@@ -447,6 +449,18 @@ func GetColVals(val reflect.Value, cols []string) (values []string, err error) {
 		}
 
 		if values[i], err = GetValQuoteStr(fieldVal); err != nil {
+			return
+		}
+	}
+
+	return
+}
+
+func GetMapColVals(valMap map[string]interface{}, cols []string) (values []string, err error) {
+	values = make([]string, len(cols))
+
+	for i, col := range cols {
+		if values[i], err = GetValQuoteStr(reflect.ValueOf(valMap[col])); err != nil {
 			return
 		}
 	}
