@@ -131,41 +131,47 @@ func (sc *Client) ExecuteReturnRowsAffected(sqlStr string) (rowsAffected int, er
 }
 
 func (sc *Client) insertMap(valMap map[string]interface{}, doReplace bool) (err error) {
-	if err = sc.InitMap(valMap); err != nil {
-		return fmt.Errorf("insertMap > %v", err)
-	}
-
-	var colVals []string
-	if len(sc.Columns) == 0 {
-		if reflect.TypeOf(sc.valMap).Kind() == reflect.Map {
-			// anon function signature
-			var appendField func(*[]string, *[]string, *[]string, map[string]interface{}) error
-
-			// anon function
-			appendField = func(mapColumns *[]string, sphinxColumns *[]string, vals *[]string, valMap map[string]interface{}) (err error) {
-				for column, value := range valMap {
-					switch value.(type) {
-					default:
-						*sphinxColumns = append(*sphinxColumns, column)
-						*mapColumns = append(*mapColumns, column)
-						s, err := GetValQuoteStr(reflect.ValueOf(value))
-						if err != nil {
-							return err
-						}
-						*vals = append(*vals, s)
-					}
-				}
-				return nil
-			}
-
-			if err = appendField(&sc.MapColumns, &sc.Columns, &colVals, sc.valMap); err != nil {
-				return
-			}
-
+	//log.Fatal(valMap)
+	/*
+		if err = sc.InitMap(valMap); err != nil {
+			return fmt.Errorf("insertMap > %v", err)
 		}
-	} else if colVals, err = GetMapColVals(sc.valMap, sc.MapColumns); err != nil {
-		return
+	*/
+
+	var mapColumns []string
+	var sphinxCols []string
+	var sphinxColVals []string
+
+	//if len(sc.Columns) == 0 {
+	//if reflect.TypeOf(valMap).Kind() == reflect.Map {
+	// anon function signature
+	var appendField func(*[]string, *[]string, *[]string, map[string]interface{}) error
+
+	// anon function
+	appendField = func(mapColumns *[]string, sphinxColumns *[]string, vals *[]string, valMap map[string]interface{}) (err error) {
+		for column, value := range valMap {
+			switch value.(type) {
+			default:
+				*sphinxColumns = append(*sphinxColumns, column)
+				*mapColumns = append(*mapColumns, column)
+				//log.Fatal(reflect.ValueOf(value))
+				s, err := GetValQuoteStr(reflect.ValueOf(value))
+				if err != nil {
+					return err
+				}
+				*vals = append(*vals, s)
+			}
+		}
+		return nil
 	}
+
+	if err = appendField(&mapColumns, &sphinxCols, &sphinxColVals, valMap); err != nil {
+		return err
+	}
+	//}
+	//} else if colVals, err = GetMapColVals(sc.valMap, sc.MapColumns); err != nil {
+	//	return
+	//}
 
 	var sqlStr string
 	if doReplace {
@@ -174,7 +180,9 @@ func (sc *Client) insertMap(valMap map[string]interface{}, doReplace bool) (err 
 		sqlStr = "INSERT"
 	}
 
-	sqlStr += fmt.Sprintf(" INTO %s (%s) VALUES (%s)", sc.Index, strings.Join(sc.Columns, ","), strings.Join(colVals, ","))
+	//log.Fatal(sc)
+
+	sqlStr += fmt.Sprintf(" INTO %s (%s) VALUES (%s)", sc.Index, strings.Join(sphinxCols, ","), strings.Join(sphinxColVals, ","))
 
 	//log.Fatalf("\nInsert sql: %s\n", sqlStr)
 	//log.Fatalf("%d, %d\n", len(colVals), len(sc.MapColumns))
@@ -505,7 +513,6 @@ func GetValQuoteStr(val reflect.Value) (string, error) {
 	default:
 		return "", fmt.Errorf("GetValQuoteStr> reflect.Value is not a string/int/uint/float/bool/[]byte!\nval: %v", val)
 	}
-	return "", nil
 }
 
 func getFieldIndexByName(typ reflect.Type, name string) (index []int) {
