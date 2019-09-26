@@ -130,14 +130,71 @@ func (sc *Client) ExecuteReturnRowsAffected(sqlStr string) (rowsAffected int, er
 	return
 }
 
-func (sc *Client) insertMap(valMap map[string]interface{}, doReplace bool) (err error) {
-	//log.Fatal(valMap)
-	/*
-		if err = sc.InitMap(valMap); err != nil {
-			return fmt.Errorf("insertMap > %v", err)
-		}
-	*/
+func getMapColumns(valMap map[string]interface{}) []string {
+	var cols []string
+	for col := range valMap {
+		cols = append(cols, col)
+	}
+	return cols
+}
 
+// returns string of data to be inserted in sphinx via sql ('metadata text', 'metadata 2 text'... 'data') in sequence of cols []string
+func getMapVals(cols []string, valMap map[string]interface{}) ([]string, error) {
+	var vals []string
+
+	for _, col := range cols {
+		//strVal, err := GetValQuoteStr(reflect.ValueOf(valMap[col]))
+		strVal, err := GetValQuoteStrNative(valMap[col])
+		if err != nil {
+			return nil, err
+		}
+		vals = append(vals, strVal)
+	}
+
+	return vals, nil
+}
+
+func (sc *Client) insertMapMany(arrValMap []map[string]interface{}, doReplace bool) error {
+	arrValMapLen := len(arrValMap)
+	if arrValMapLen == 0 {
+		return fmt.Errorf("insertMapMany > arrValMap length is 0, no rows to insert")
+	}
+
+	mapCols := getMapColumns(arrValMap[0])
+
+	var sqlStr string
+	if doReplace {
+		sqlStr = "REPLACE"
+	} else {
+		sqlStr = "INSERT"
+	}
+
+	sqlStr += fmt.Sprintf(" INTO %s (%s) VALUES ", sc.Index, strings.Join(mapCols, ","))
+
+	for index, valMap := range arrValMap {
+		vals, err := getMapVals(mapCols, valMap)
+		if err != nil {
+			return err
+		}
+		//log.Fatal(vals)
+		if index == (arrValMapLen - 1) {
+			sqlStr += fmt.Sprintf("(%s)", strings.Join(vals, ","))
+		} else {
+			sqlStr += fmt.Sprintf("(%s),", strings.Join(vals, ","))
+		}
+	}
+
+	//log.Fatalf("\nInsert sql: %s\n", sqlStr)
+	//log.Fatalf("%d, %d\n", len(colVals), len(sc.MapColumns))
+
+	if _, err := sc.Execute(sqlStr); err != nil {
+		return fmt.Errorf("InsertMapMany > %v", err)
+	}
+
+	return nil
+}
+
+func (sc *Client) insertMap(valMap map[string]interface{}, doReplace bool) (err error) {
 	var mapColumns []string
 	var sphinxCols []string
 	var sphinxColVals []string
@@ -296,6 +353,10 @@ func (sc *Client) Insert(obj interface{}) error {
 func (sc *Client) Replace(obj interface{}) error {
 	// true means DO REPLACE
 	return sc.insert(obj, true)
+}
+
+func (sc *Client) ReplaceMapMany(arrValMap []map[string]interface{}) error {
+	return sc.insertMapMany(arrValMap, true)
 }
 
 func (sc *Client) ReplaceMap(valMap map[string]interface{}) error {
@@ -512,6 +573,48 @@ func GetValQuoteStr(val reflect.Value) (string, error) {
 		return QuoteStr(string(val.Interface().([]byte))), nil
 	default:
 		return "", fmt.Errorf("GetValQuoteStr> reflect.Value is not a string/int/uint/float/bool/[]byte!\nval: %v", val)
+	}
+}
+
+// GetValQuoteStrNative uses native type switch to determine what data to return
+func GetValQuoteStrNative(val interface{}) (string, error) {
+	switch t := val.(type) {
+	case bool:
+		boolStr := "N"
+		if t {
+			boolStr = "Y"
+		}
+		return boolStr, nil
+	case int:
+		return strconv.FormatInt(int64(t), 10), nil
+	case int8:
+		return strconv.FormatInt(int64(t), 10), nil
+	case int16:
+		return strconv.FormatInt(int64(t), 10), nil
+	case int32:
+		return strconv.FormatInt(int64(t), 10), nil
+	case int64:
+		return strconv.FormatInt(t, 10), nil
+	case uint:
+		return strconv.FormatUint(uint64(t), 10), nil
+	case uint8:
+		return strconv.FormatUint(uint64(t), 10), nil
+	case uint16:
+		return strconv.FormatUint(uint64(t), 10), nil
+	case uint32:
+		return strconv.FormatUint(uint64(t), 10), nil
+	case uint64:
+		return strconv.FormatUint(t, 10), nil
+	case float32:
+		return strconv.FormatFloat(float64(t), 'f', -1, 64), nil
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64), nil
+	case string:
+		return QuoteStr(t), nil
+	case []int:
+		return "(" + arrayToString(t, ",") + ")", nil
+	default:
+		return "", fmt.Errorf("GetValQuoteStrNative> t is not a string/int/uint/float/bool/[]byte!\nval: %v, %T", val, val)
 	}
 }
 
